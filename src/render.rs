@@ -1,10 +1,6 @@
 use bevy::app::prelude::*;
 use bevy::asset::{embedded_asset, load_embedded_asset, AssetServer, Handle};
-use bevy::camera::{
-    prelude::*,
-    visibility::{self, NoFrustumCulling, VisibilityClass},
-};
-use bevy::color::{Color, ColorToComponents};
+use bevy::color::ColorToComponents;
 use bevy::core_pipeline::{core_3d::Transparent3d, FullscreenShader};
 use bevy::ecs::{
     prelude::*,
@@ -16,7 +12,6 @@ use bevy::ecs::{
 };
 use bevy::image::BevyDefault;
 use bevy::math::{Mat3, Vec3, Vec4};
-use bevy::reflect::{std_traits::ReflectDefault, Reflect};
 use bevy::render::{
     prelude::*,
     render_phase::{
@@ -31,7 +26,7 @@ use bevy::render::{
         SpecializedRenderPipeline, SpecializedRenderPipelines, TextureFormat,
     },
     renderer::{RenderDevice, RenderQueue},
-    sync_world::{RenderEntity, SyncToRenderWorld},
+    sync_world::RenderEntity,
     view::{
         ExtractedView, RenderVisibleEntities, ViewTarget, ViewUniform, ViewUniformOffset,
         ViewUniforms,
@@ -39,7 +34,7 @@ use bevy::render::{
     Extract, Render, RenderApp, RenderSystems,
 };
 use bevy::shader::Shader;
-use bevy::transform::components::{GlobalTransform, Transform};
+use bevy::transform::components::GlobalTransform;
 
 use crate::{InfiniteGrid, InfiniteGridSettings};
 
