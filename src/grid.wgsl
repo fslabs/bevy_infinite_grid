@@ -6,7 +6,7 @@ struct InfiniteGridPosition {
 };
 
 struct InfiniteGridSettings {
-    scale: f32,
+    scale: vec2<f32>,
     // 1 / fadeout_distance
     dist_fadeout_const: f32,
     dot_fadeout_const: f32,
@@ -95,8 +95,7 @@ fn fragment(in: VertexOutput) -> FragmentOutput {
 
     out.depth = clip_depth;
 
-    let scale = grid_settings.scale;
-    let coord = plane_coords * scale; // use the scale variable to set the distance between the lines
+    let coord = plane_coords * grid_settings.scale;
     let derivative = fwidth(coord);
     let grid = abs(fract(coord - 0.5) - 0.5) / derivative;
     let lne = min(grid.x, grid.y);

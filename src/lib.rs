@@ -29,7 +29,7 @@ pub struct InfiniteGridSettings {
     pub major_line_color: Color,
     pub fadeout_distance: f32,
     pub dot_fadeout_strength: f32,
-    pub scale: f32,
+    pub scale: Vec2,
 }
 
 impl Default for InfiniteGridSettings {
@@ -41,7 +41,7 @@ impl Default for InfiniteGridSettings {
             major_line_color: Color::srgb(0.25, 0.25, 0.25),
             fadeout_distance: 100.,
             dot_fadeout_strength: 0.25,
-            scale: 1.,
+            scale: Vec2::ONE,
         }
     }
 }

@@ -84,7 +84,7 @@ pub struct InfiniteGridUniform {
 
 #[derive(Debug, ShaderType)]
 pub struct GridDisplaySettingsUniform {
-    scale: f32,
+    scale: Vec2,
     // 1 / fadeout_distance
     dist_fadeout_const: f32,
     dot_fadeout_const: f32,
