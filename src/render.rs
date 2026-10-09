@@ -1,105 +1,99 @@
-use std::borrow::Cow;
-
-use bevy::{
-    asset::{load_internal_asset, uuid_handle},
-    core_pipeline::core_3d::Transparent3d,
-    ecs::{
-        query::ROQueryItem,
-        system::lifetimeless::{Read, SRes},
-        system::SystemParamItem,
-    },
-    image::BevyDefault,
-    pbr::MeshPipelineKey,
+use bevy::app::prelude::*;
+use bevy::asset::{embedded_asset, load_embedded_asset, AssetServer, Handle};
+use bevy::color::ColorToComponents;
+use bevy::core_pipeline::{core_3d::Transparent3d, FullscreenShader};
+use bevy::ecs::{
     prelude::*,
-    render::{
-        render_phase::{
-            AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
-            RenderCommandResult, SetItemPipeline, ViewSortedRenderPhases,
-        },
-        render_resource::PrimitiveTopology,
-        render_resource::{
-            binding_types::uniform_buffer, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor,
-            BindGroupLayoutEntries, BlendState, ColorTargetState, ColorWrites, CompareFunction,
-            DepthBiasState, DepthStencilState, DynamicUniformBuffer, FragmentState,
-            MultisampleState, PipelineCache, PolygonMode, PrimitiveState, RenderPipelineDescriptor,
-            ShaderStages, ShaderType, SpecializedRenderPipeline, SpecializedRenderPipelines,
-            StencilFaceState, StencilState, TextureFormat, VertexState,
-        },
-        renderer::{RenderDevice, RenderQueue},
-        sync_world::RenderEntity,
-        view::{ExtractedView, RenderVisibleEntities, ViewTarget},
-        Extract, ExtractSchedule, Render, RenderApp, RenderSystems,
+    query::ROQueryItem,
+    system::{
+        lifetimeless::{Read, SRes},
+        SystemParamItem,
     },
 };
+use bevy::image::BevyDefault;
+use bevy::math::{Mat3, Vec3, Vec4};
+use bevy::render::{
+    prelude::*,
+    render_phase::{
+        AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
+        RenderCommandResult, SetItemPipeline, TrackedRenderPass, ViewSortedRenderPhases,
+    },
+    render_resource::{
+        binding_types::uniform_buffer, BindGroup, BindGroupEntries, BindGroupLayoutDescriptor,
+        BindGroupLayoutEntries, BlendState, ColorTargetState, ColorWrites, CompareFunction,
+        DepthStencilState, DynamicUniformBuffer, FragmentState, MultisampleState, PipelineCache,
+        PrimitiveState, RenderPipelineDescriptor, ShaderStages, ShaderType,
+        SpecializedRenderPipeline, SpecializedRenderPipelines, TextureFormat,
+    },
+    renderer::{RenderDevice, RenderQueue},
+    sync_world::RenderEntity,
+    view::{
+        ExtractedView, RenderVisibleEntities, ViewTarget, ViewUniform, ViewUniformOffset,
+        ViewUniforms,
+    },
+    Extract, Render, RenderApp, RenderSystems,
+};
+use bevy::shader::Shader;
+use bevy::transform::components::GlobalTransform;
 
-use crate::InfiniteGridSettings;
+use crate::{InfiniteGrid, InfiniteGridSettings};
 
-const GRID_SHADER_HANDLE: Handle<Shader> = uuid_handle!("01968ec1-1753-7731-9b47-b50296bcb86b");
-
-pub fn render_app_builder(app: &mut App) {
-    load_internal_asset!(app, GRID_SHADER_HANDLE, "grid.wgsl", Shader::from_wgsl);
+pub(crate) fn render_app_builder(app: &mut App) {
+    embedded_asset!(app, "infinite_grid.wgsl");
+    app.register_type::<InfiniteGrid>()
+        .register_type::<InfiniteGridSettings>();
 
     let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
         return;
     };
     render_app
-        .init_resource::<GridViewUniforms>()
         .init_resource::<InfiniteGridUniforms>()
-        .init_resource::<GridDisplaySettingsUniforms>()
+        .init_resource::<InfiniteGridDisplaySettingsUniforms>()
         .init_resource::<InfiniteGridPipeline>()
         .init_resource::<SpecializedRenderPipelines<InfiniteGridPipeline>>()
         .add_render_command::<Transparent3d, DrawInfiniteGrid>()
-        .add_systems(
-            ExtractSchedule,
-            (extract_infinite_grids, extract_per_camera_settings),
-        )
+        .add_systems(ExtractSchedule, extract_infinite_grids)
         .add_systems(
             Render,
-            (prepare_infinite_grids, prepare_grid_view_uniforms)
-                .in_set(RenderSystems::PrepareResources),
+            prepare_infinite_grids.in_set(RenderSystems::PrepareResources),
         )
         .add_systems(
             Render,
             (
                 prepare_bind_groups_for_infinite_grids,
-                prepare_grid_view_bind_groups,
+                prepare_view_bind_groups,
             )
                 .in_set(RenderSystems::PrepareBindGroups),
         )
         .add_systems(Render, queue_infinite_grids.in_set(RenderSystems::Queue));
 }
 
-#[derive(Component)]
-struct ExtractedInfiniteGrid {
-    transform: GlobalTransform,
-    grid: InfiniteGridSettings,
-}
-
 #[derive(Debug, ShaderType)]
-pub struct InfiniteGridUniform {
+struct InfiniteGridUniform {
     rot_matrix: Mat3,
     offset: Vec3,
     normal: Vec3,
 }
 
 #[derive(Debug, ShaderType)]
-pub struct GridDisplaySettingsUniform {
+struct InfiniteGridSettingsUniform {
     scale: f32,
     // 1 / fadeout_distance
-    dist_fadeout_const: f32,
-    dot_fadeout_const: f32,
+    one_over_fadeout_distance: f32,
+    // 1 / dot_fadeout_strength
+    one_over_dot_fadeout: f32,
     x_axis_color: Vec3,
     z_axis_color: Vec3,
     minor_line_color: Vec4,
     major_line_color: Vec4,
 }
 
-impl GridDisplaySettingsUniform {
+impl InfiniteGridSettingsUniform {
     fn from_settings(settings: &InfiniteGridSettings) -> Self {
         Self {
             scale: settings.scale,
-            dist_fadeout_const: 1. / settings.fadeout_distance,
-            dot_fadeout_const: 1. / settings.dot_fadeout_strength,
+            one_over_fadeout_distance: 1. / settings.fadeout_distance,
+            one_over_dot_fadeout: 1. / settings.dot_fadeout_strength,
             x_axis_color: settings.x_axis_color.to_linear().to_vec3(),
             z_axis_color: settings.z_axis_color.to_linear().to_vec3(),
             minor_line_color: settings.minor_line_color.to_linear().to_vec4(),
@@ -114,8 +108,8 @@ struct InfiniteGridUniforms {
 }
 
 #[derive(Resource, Default)]
-struct GridDisplaySettingsUniforms {
-    uniforms: DynamicUniformBuffer<GridDisplaySettingsUniform>,
+struct InfiniteGridDisplaySettingsUniforms {
+    uniforms: DynamicUniformBuffer<InfiniteGridSettingsUniform>,
 }
 
 #[derive(Component)]
@@ -125,7 +119,7 @@ struct InfiniteGridUniformOffsets {
 }
 
 #[derive(Component)]
-pub struct PerCameraSettingsUniformOffset {
+struct PerCameraSettingsUniformOffset {
     offset: u32,
 }
 
@@ -134,71 +128,41 @@ struct InfiniteGridBindGroup {
     value: BindGroup,
 }
 
-#[derive(Clone, ShaderType)]
-pub struct GridViewUniform {
-    projection: Mat4,
-    inverse_projection: Mat4,
-    view: Mat4,
-    inverse_view: Mat4,
-    world_position: Vec3,
-}
-
-#[derive(Resource, Default)]
-pub struct GridViewUniforms {
-    uniforms: DynamicUniformBuffer<GridViewUniform>,
-}
-
 #[derive(Component)]
-pub struct GridViewUniformOffset {
-    pub offset: u32,
-}
-
-#[derive(Component)]
-struct GridViewBindGroup {
+struct ViewBindGroup {
     value: BindGroup,
 }
 
-struct SetGridViewBindGroup<const I: usize>;
+struct DrawInfiniteGridCommand;
 
-impl<const I: usize, P: PhaseItem> RenderCommand<P> for SetGridViewBindGroup<I> {
-    type Param = ();
-    type ViewQuery = (Read<GridViewUniformOffset>, Read<GridViewBindGroup>);
-    type ItemQuery = ();
-
-    #[inline]
-    fn render<'w>(
-        _item: &P,
-        (view_uniform, bind_group): ROQueryItem<'w, '_, Self::ViewQuery>,
-        _entity: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        _param: SystemParamItem<'w, '_, Self::Param>,
-        pass: &mut bevy::render::render_phase::TrackedRenderPass<'w>,
-    ) -> RenderCommandResult {
-        pass.set_bind_group(I, &bind_group.value, &[view_uniform.offset]);
-        RenderCommandResult::Success
-    }
-}
-
-struct SetInfiniteGridBindGroup<const I: usize>;
-
-impl<const I: usize, P: PhaseItem> RenderCommand<P> for SetInfiniteGridBindGroup<I> {
+impl<P: PhaseItem> RenderCommand<P> for DrawInfiniteGridCommand {
     type Param = SRes<InfiniteGridBindGroup>;
-    type ViewQuery = Option<Read<PerCameraSettingsUniformOffset>>;
+    type ViewQuery = (
+        Read<ViewUniformOffset>,
+        Read<ViewBindGroup>,
+        Option<Read<PerCameraSettingsUniformOffset>>,
+    );
     type ItemQuery = Read<InfiniteGridUniformOffsets>;
 
     #[inline]
     fn render<'w>(
         _item: &P,
-        camera_settings_offset: ROQueryItem<'w, '_, Self::ViewQuery>,
-        base_offsets: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
+        (view_uniform, view_bind_group, camera_settings_offset): ROQueryItem<
+            'w,
+            '_,
+            Self::ViewQuery,
+        >,
+        maybe_base_offsets: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
         bind_group: SystemParamItem<'w, '_, Self::Param>,
-        pass: &mut bevy::render::render_phase::TrackedRenderPass<'w>,
+        pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let Some(base_offsets) = base_offsets else {
-            warn!("PerCameraSettingsUniformOffset missing");
+        let Some(base_offsets) = maybe_base_offsets else {
+            bevy::log::warn!("InfiniteGridUniformOffsets missing");
             return RenderCommandResult::Skip;
         };
+        pass.set_bind_group(0, &view_bind_group.value, &[view_uniform.offset]);
         pass.set_bind_group(
-            I,
+            1,
             &bind_group.into_inner().value,
             &[
                 base_offsets.position_offset,
@@ -207,133 +171,59 @@ impl<const I: usize, P: PhaseItem> RenderCommand<P> for SetInfiniteGridBindGroup
                     .unwrap_or(base_offsets.settings_offset),
             ],
         );
+        pass.draw(0..3, 0..1);
         RenderCommandResult::Success
     }
 }
 
-struct FinishDrawInfiniteGrid;
+type DrawInfiniteGrid = (SetItemPipeline, DrawInfiniteGridCommand);
 
-impl<P: PhaseItem> RenderCommand<P> for FinishDrawInfiniteGrid {
-    type Param = ();
-    type ViewQuery = ();
-    type ItemQuery = ();
-
-    #[inline]
-    fn render<'w>(
-        _item: &P,
-        _view: ROQueryItem<'w, '_, Self::ViewQuery>,
-        _entity: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        _param: SystemParamItem<'w, '_, Self::Param>,
-        pass: &mut bevy::render::render_phase::TrackedRenderPass<'w>,
-    ) -> RenderCommandResult {
-        pass.draw(0..4, 0..1);
-        RenderCommandResult::Success
-    }
-}
-
-fn prepare_grid_view_uniforms(
+fn prepare_view_bind_groups(
     mut commands: Commands,
     render_device: Res<RenderDevice>,
-    render_queue: Res<RenderQueue>,
-    mut view_uniforms: ResMut<GridViewUniforms>,
-    views: Query<(Entity, &ExtractedView)>,
-) {
-    view_uniforms.uniforms.clear();
-    for (entity, camera) in views.iter() {
-        let projection = camera.clip_from_view;
-        let view = camera.world_from_view.to_matrix();
-        let inverse_view = view.inverse();
-        commands.entity(entity).insert(GridViewUniformOffset {
-            offset: view_uniforms.uniforms.push(&GridViewUniform {
-                projection,
-                view,
-                inverse_view,
-                inverse_projection: projection.inverse(),
-                world_position: camera.world_from_view.translation(),
-            }),
-        });
-    }
-
-    view_uniforms
-        .uniforms
-        .write_buffer(&render_device, &render_queue)
-}
-
-fn prepare_grid_view_bind_groups(
-    mut commands: Commands,
-    render_device: Res<RenderDevice>,
-    uniforms: Res<GridViewUniforms>,
+    view_uniforms: Res<ViewUniforms>,
     pipeline: Res<InfiniteGridPipeline>,
     pipeline_cache: Res<PipelineCache>,
-    views: Query<Entity, With<GridViewUniformOffset>>,
+    views: Query<Entity, With<ViewUniformOffset>>,
 ) {
-    if let Some(binding) = uniforms.uniforms.binding() {
-        for entity in views.iter() {
-            let bind_group = render_device.create_bind_group(
-                "grid-view-bind-group",
-                &pipeline_cache.get_bind_group_layout(&pipeline.view_layout),
-                &BindGroupEntries::single(binding.clone()),
-            );
-            commands
-                .entity(entity)
-                .insert(GridViewBindGroup { value: bind_group });
-        }
+    let Some(binding) = view_uniforms.uniforms.binding() else {
+        return;
+    };
+    for entity in views.iter() {
+        let bind_group = render_device.create_bind_group(
+            "infinite_grid_view_bind_group",
+            &pipeline_cache.get_bind_group_layout(&pipeline.view_layout),
+            &BindGroupEntries::single(binding.clone()),
+        );
+        commands
+            .entity(entity)
+            .insert(ViewBindGroup { value: bind_group });
     }
 }
 
 fn extract_infinite_grids(
     mut commands: Commands,
-    grids: Extract<
-        Query<(
-            RenderEntity,
-            &InfiniteGridSettings,
-            &GlobalTransform,
-            &RenderVisibleEntities,
-        )>,
-    >,
+    grids: Extract<Query<(RenderEntity, &InfiniteGridSettings, &GlobalTransform)>>,
 ) {
     let extracted: Vec<_> = grids
         .iter()
-        .map(|(entity, grid, transform, visible_entities)| {
-            (
-                entity,
-                (
-                    ExtractedInfiniteGrid {
-                        transform: *transform,
-                        grid: *grid,
-                    },
-                    visible_entities.clone(),
-                ),
-            )
-        })
-        .collect();
-    commands.try_insert_batch(extracted);
-}
-
-fn extract_per_camera_settings(
-    mut commands: Commands,
-    cameras: Extract<Query<(RenderEntity, &InfiniteGridSettings), With<Camera>>>,
-) {
-    let extracted: Vec<_> = cameras
-        .iter()
-        .map(|(entity, settings)| (entity, *settings))
+        .map(|(entity, grid, transform)| (entity, (*grid, *transform)))
         .collect();
     commands.try_insert_batch(extracted);
 }
 
 fn prepare_infinite_grids(
     mut commands: Commands,
-    grids: Query<(Entity, &ExtractedInfiniteGrid)>,
+    grids: Query<(Entity, &GlobalTransform, &InfiniteGridSettings)>,
     cameras: Query<(Entity, &InfiniteGridSettings), With<ExtractedView>>,
     mut position_uniforms: ResMut<InfiniteGridUniforms>,
-    mut settings_uniforms: ResMut<GridDisplaySettingsUniforms>,
+    mut settings_uniforms: ResMut<InfiniteGridDisplaySettingsUniforms>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
 ) {
     position_uniforms.uniforms.clear();
     settings_uniforms.uniforms.clear();
-    for (entity, extracted) in &grids {
-        let transform = extracted.transform;
+    for (entity, transform, settings) in &grids {
         let t = transform.compute_transform();
         let offset = transform.translation();
         let normal = transform.up();
@@ -346,7 +236,7 @@ fn prepare_infinite_grids(
             }),
             settings_offset: settings_uniforms
                 .uniforms
-                .push(&GridDisplaySettingsUniform::from_settings(&extracted.grid)),
+                .push(&InfiniteGridSettingsUniform::from_settings(settings)),
         });
     }
 
@@ -356,7 +246,7 @@ fn prepare_infinite_grids(
             .insert(PerCameraSettingsUniformOffset {
                 offset: settings_uniforms
                     .uniforms
-                    .push(&GridDisplaySettingsUniform::from_settings(settings)),
+                    .push(&InfiniteGridSettingsUniform::from_settings(settings)),
             });
     }
 
@@ -371,13 +261,13 @@ fn prepare_infinite_grids(
 
 fn prepare_bind_groups_for_infinite_grids(
     mut commands: Commands,
-    position_uniforms: Res<InfiniteGridUniforms>,
-    settings_uniforms: Res<GridDisplaySettingsUniforms>,
+    infinite_grid_uniforms: Res<InfiniteGridUniforms>,
+    settings_uniforms: Res<InfiniteGridDisplaySettingsUniforms>,
     pipeline: Res<InfiniteGridPipeline>,
     pipeline_cache: Res<PipelineCache>,
     render_device: Res<RenderDevice>,
 ) {
-    let Some((position_binding, settings_binding)) = position_uniforms
+    let Some((infinite_grid_uniform_binding, settings_binding)) = infinite_grid_uniforms
         .uniforms
         .binding()
         .zip(settings_uniforms.uniforms.binding())
@@ -386,53 +276,58 @@ fn prepare_bind_groups_for_infinite_grids(
     };
 
     let bind_group = render_device.create_bind_group(
-        "infinite-grid-bind-group",
+        "infinite_grid_bind_group",
         &pipeline_cache.get_bind_group_layout(&pipeline.infinite_grid_layout),
-        &BindGroupEntries::sequential((position_binding.clone(), settings_binding.clone())),
+        &BindGroupEntries::sequential((
+            infinite_grid_uniform_binding.clone(),
+            settings_binding.clone(),
+        )),
     );
     commands.insert_resource(InfiniteGridBindGroup { value: bind_group });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn queue_infinite_grids(
     pipeline_cache: Res<PipelineCache>,
     transparent_draw_functions: Res<DrawFunctions<Transparent3d>>,
     pipeline: Res<InfiniteGridPipeline>,
     mut pipelines: ResMut<SpecializedRenderPipelines<InfiniteGridPipeline>>,
-    infinite_grids: Query<&ExtractedInfiniteGrid>,
+    infinite_grids: Query<&GlobalTransform, With<InfiniteGridSettings>>,
     mut transparent_render_phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     mut views: Query<(&ExtractedView, &RenderVisibleEntities, &Msaa)>,
 ) {
-    let draw_function_id = transparent_draw_functions
+    let Some(draw_function_id) = transparent_draw_functions
         .read()
         .get_id::<DrawInfiniteGrid>()
-        .unwrap();
+    else {
+        bevy::log::warn!("Failed to get DrawInfiniteGrid draw_function_id");
+        return;
+    };
 
     for (view, entities, msaa) in views.iter_mut() {
         let Some(phase) = transparent_render_phases.get_mut(&view.retained_view_entity) else {
             continue;
         };
 
-        let mesh_key = MeshPipelineKey::from_hdr(view.hdr);
         let pipeline_id = pipelines.specialize(
             &pipeline_cache,
             &pipeline,
             GridPipelineKey {
-                mesh_key,
+                hdr: view.hdr,
                 sample_count: msaa.samples(),
             },
         );
-        for &entity in entities.iter::<InfiniteGridSettings>() {
-            if !infinite_grids
-                .get(entity.0)
-                .map(|grid| plane_check(&grid.transform, view.world_from_view.translation()))
-                .unwrap_or(false)
-            {
+
+        for (render_entity, main_entity) in entities.iter::<InfiniteGrid>() {
+            let Ok(transform) = infinite_grids.get(*render_entity) else {
+                continue;
+            };
+            // Don't render if the view is directly on the plane
+            if !plane_check(transform, view.world_from_view.translation()) {
                 continue;
             }
-            phase.items.push(Transparent3d {
+            phase.add(Transparent3d {
                 pipeline: pipeline_id,
-                entity,
+                entity: (*render_entity, *main_entity),
                 draw_function: draw_function_id,
                 distance: f32::NEG_INFINITY,
                 batch_range: 0..1,
@@ -443,53 +338,53 @@ fn queue_infinite_grids(
     }
 }
 
+/// Checks if the point is one the plane
 fn plane_check(plane: &GlobalTransform, point: Vec3) -> bool {
     plane.up().dot(plane.translation() - point).abs() > f32::EPSILON
 }
-
-type DrawInfiniteGrid = (
-    SetItemPipeline,
-    SetGridViewBindGroup<0>,
-    SetInfiniteGridBindGroup<1>,
-    FinishDrawInfiniteGrid,
-);
 
 #[derive(Resource)]
 struct InfiniteGridPipeline {
     view_layout: BindGroupLayoutDescriptor,
     infinite_grid_layout: BindGroupLayoutDescriptor,
+    shader: Handle<Shader>,
+    fullscreen_shader: FullscreenShader,
 }
 
 impl FromWorld for InfiniteGridPipeline {
-    fn from_world(_world: &mut World) -> Self {
+    fn from_world(world: &mut World) -> Self {
         let view_layout = BindGroupLayoutDescriptor::new(
-            "grid-view-bind-group-layout",
+            "infinite_grid_view_bind_group_layout",
             &BindGroupLayoutEntries::single(
                 ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-                uniform_buffer::<GridViewUniform>(true),
+                uniform_buffer::<ViewUniform>(true),
             ),
         );
         let infinite_grid_layout = BindGroupLayoutDescriptor::new(
-            "infinite-grid-bind-group-layout",
+            "infinite_grid_bind_group_layout",
             &BindGroupLayoutEntries::sequential(
                 ShaderStages::FRAGMENT,
                 (
                     uniform_buffer::<InfiniteGridUniform>(true),
-                    uniform_buffer::<GridDisplaySettingsUniform>(true),
+                    uniform_buffer::<InfiniteGridSettingsUniform>(true),
                 ),
             ),
         );
+        let shader = load_embedded_asset!(world.resource::<AssetServer>(), "infinite_grid.wgsl");
+        let fullscreen_shader = world.resource::<FullscreenShader>().clone();
 
         Self {
             view_layout,
             infinite_grid_layout,
+            shader,
+            fullscreen_shader,
         }
     }
 }
 
 #[derive(Hash, PartialEq, Eq, Clone, Copy)]
-pub struct GridPipelineKey {
-    mesh_key: MeshPipelineKey,
+struct GridPipelineKey {
+    hdr: bool,
     sample_count: u32,
 }
 
@@ -497,63 +392,41 @@ impl SpecializedRenderPipeline for InfiniteGridPipeline {
     type Key = GridPipelineKey;
 
     fn specialize(&self, key: Self::Key) -> RenderPipelineDescriptor {
-        let format = if key.mesh_key.contains(MeshPipelineKey::HDR) {
+        let format = if key.hdr {
             ViewTarget::TEXTURE_FORMAT_HDR
         } else {
             TextureFormat::bevy_default()
         };
 
         RenderPipelineDescriptor {
-            label: Some(Cow::Borrowed("grid-render-pipeline")),
+            label: Some("infinite_grid_render_pipeline".into()),
             layout: vec![self.view_layout.clone(), self.infinite_grid_layout.clone()],
-            push_constant_ranges: Vec::new(),
-            vertex: VertexState {
-                shader: GRID_SHADER_HANDLE,
-                shader_defs: vec![],
-                entry_point: Some(Cow::Borrowed("vertex")),
-                buffers: vec![],
-            },
+            vertex: self.fullscreen_shader.to_vertex_state(),
             primitive: PrimitiveState {
-                topology: PrimitiveTopology::TriangleStrip,
-                strip_index_format: None,
-                front_face: bevy::render::render_resource::FrontFace::Ccw,
                 cull_mode: None,
-                unclipped_depth: false,
-                polygon_mode: PolygonMode::Fill,
-                conservative: false,
+                ..Default::default()
             },
             depth_stencil: Some(DepthStencilState {
                 format: TextureFormat::Depth32Float,
                 depth_write_enabled: false,
                 depth_compare: CompareFunction::Greater,
-                stencil: StencilState {
-                    front: StencilFaceState::IGNORE,
-                    back: StencilFaceState::IGNORE,
-                    read_mask: 0,
-                    write_mask: 0,
-                },
-                bias: DepthBiasState {
-                    constant: 0,
-                    slope_scale: 0.0,
-                    clamp: 0.0,
-                },
+                stencil: Default::default(),
+                bias: Default::default(),
             }),
             multisample: MultisampleState {
                 count: key.sample_count,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
+                ..Default::default()
             },
             fragment: Some(FragmentState {
-                shader: GRID_SHADER_HANDLE,
-                shader_defs: vec![],
-                entry_point: Some(Cow::Borrowed("fragment")),
+                shader: self.shader.clone(),
                 targets: vec![Some(ColorTargetState {
                     format,
                     blend: Some(BlendState::ALPHA_BLENDING),
                     write_mask: ColorWrites::ALL,
                 })],
+                ..Default::default()
             }),
-            zero_initialize_workgroup_memory: false,
+            ..Default::default()
         }
     }
 }

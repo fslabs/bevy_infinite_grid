@@ -3,7 +3,7 @@ mod render;
 use bevy::{
     camera::visibility::{self, NoFrustumCulling, VisibilityClass},
     prelude::*,
-    render::{sync_world::SyncToRenderWorld, view::RenderVisibleEntities},
+    render::sync_world::SyncToRenderWorld,
 };
 
 pub struct InfiniteGridPlugin;
@@ -16,19 +16,42 @@ impl Plugin for InfiniteGridPlugin {
     }
 }
 
-#[derive(Component, Default)]
+/// The component used to represent an infinite grid.
+///
+/// This is intended for use as a ground plane in editor-like tools.
+#[derive(Component, Default, Reflect)]
+#[reflect(Component, Default)]
+#[require(
+    InfiniteGridSettings,
+    GlobalTransform,
+    Visibility,
+    VisibilityClass,
+    NoFrustumCulling,
+    SyncToRenderWorld
+)]
+#[component(on_add = visibility::add_visibility_class::<InfiniteGrid>)]
 pub struct InfiniteGrid;
 
-#[derive(Component, Copy, Clone)]
-#[require(VisibilityClass)]
-#[component(on_add = visibility::add_visibility_class::<InfiniteGridSettings>)]
+/// Component to configure the infinite grid
+///
+/// This component can be applied directly on the grid entity or on a camera that can see the grid
+#[derive(Component, Copy, Clone, Reflect)]
+#[reflect(Component, Default)]
 pub struct InfiniteGridSettings {
+    /// The color of the X axis
     pub x_axis_color: Color,
+    /// The color of the Z axis
     pub z_axis_color: Color,
+    /// The color of the minor lines of the grid
     pub minor_line_color: Color,
+    /// The color of the major lines of the grid. Every 10th line is considered major
     pub major_line_color: Color,
+    /// How far the grid will be visible relative to the camera
     pub fadeout_distance: f32,
+    /// How quickly the grid will fadeout
     pub dot_fadeout_strength: f32,
+    /// The scale of the distance between the lines. A smaller value increases the distance between
+    /// the lines
     pub scale: f32,
 }
 
@@ -41,21 +64,7 @@ impl Default for InfiniteGridSettings {
             major_line_color: Color::srgb(0.25, 0.25, 0.25),
             fadeout_distance: 100.,
             dot_fadeout_strength: 0.25,
-            scale: 1.,
+            scale: 1.0,
         }
     }
-}
-
-#[derive(Bundle, Default)]
-pub struct InfiniteGridBundle {
-    pub transform: Transform,
-    pub global_transform: GlobalTransform,
-    pub settings: InfiniteGridSettings,
-    pub grid: InfiniteGrid,
-    pub visibility: Visibility,
-    pub view_visibility: ViewVisibility,
-    pub inherited_visibility: InheritedVisibility,
-    pub shadow_casters: RenderVisibleEntities,
-    pub no_frustum_culling: NoFrustumCulling,
-    pub sync_to_render_world: SyncToRenderWorld,
 }

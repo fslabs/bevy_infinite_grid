@@ -43,8 +43,26 @@ Insert the infinite grid plugin after the default plugins.
 And spawn the grid to see the results.
 
 ```rust
-commands.spawn(InfiniteGridBundle::default());
+commands.spawn(InfiniteGrid);
 ```
+
+Add `InfiniteGridSettings` to configure the grid.
+
+```rust
+commands.spawn((
+    InfiniteGrid,
+    InfiniteGridSettings {
+        scale: 0.25,
+        fadeout_distance: 300.0,
+        ..default()
+    },
+));
+```
+
+Add `InfiniteGridSettings` to a camera to override the grid's appearance for that camera.
+
+`InfiniteGrid` requires `GlobalTransform`. Add `Transform` to use transform propagation, or update
+`GlobalTransform` directly to control the grid's world position and orientation.
 
 See the [simple](examples/simple.rs) demo for an example of a minimal implementation.
 

@@ -1,5 +1,5 @@
 use bevy::{camera::visibility::RenderLayers, prelude::*, render::view::Hdr};
-use bevy_infinite_grid::{InfiniteGridBundle, InfiniteGridPlugin};
+use bevy_infinite_grid::{InfiniteGrid, InfiniteGridPlugin};
 
 fn main() {
     App::new()
@@ -14,7 +14,7 @@ fn setup_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    commands.spawn((InfiniteGridBundle::default(), RenderLayers::layer(1)));
+    commands.spawn((InfiniteGrid, RenderLayers::layer(1)));
 
     commands.spawn((
         Camera3d::default(),

@@ -32,4 +32,5 @@ bevy = { version = "0.18", default-features = false, features = [
   "tonemapping_luts",
   "ktx2",
   "zstd_rust",
+  "free_camera",
 ] }
