@@ -23,7 +23,7 @@ impl Plugin for InfiniteGridPlugin {
 #[reflect(Component, Default)]
 #[require(
     InfiniteGridSettings,
-    Transform,
+    GlobalTransform,
     Visibility,
     VisibilityClass,
     NoFrustumCulling,
@@ -58,8 +58,6 @@ pub struct InfiniteGridSettings {
 impl Default for InfiniteGridSettings {
     fn default() -> Self {
         Self {
-            // These colors are copied from bevy_feathers but we don't need to depend on it just
-            // for that
             x_axis_color: Color::srgb(1.0, 0.2, 0.2),
             z_axis_color: Color::srgb(0.2, 0.2, 1.0),
             minor_line_color: Color::srgb(0.1, 0.1, 0.1),
